@@ -17,14 +17,33 @@
 # start jb-dev
 # 334698 = JRN19
 # 342231 = JRN26D
+# 367578 = JRN60B
+# 386704 = JRN80
+# 391496 = JRN83D
+# 392829 = JRN84D
+# 397360 = JRO02C
+# 398337 = JRO03C
+# 402395 = JRO03D
+# 447484 = JZO54
+# 477516 = JZO54I
+# 481723 = JZO54J
+# 485486 = JZO54K
 # end jb-dev
+# start jb-mr1-dev
+# 526897 = JOP39B
+# 527221 = JOP40
+# 527662 = JOP40C
+# end jb-mr1-dev
 
 source ../../../common/clear-factory-images-variables.sh
-BUILD=342231
+BUILD=527662
 DEVICE=grouper
 PRODUCT=nakasi
-VERSION=jrn26d
+VERSION=jop40c
+SRCPREFIX=signed-
 BOOTLOADERFILE=bootloader.bin
-BOOTLOADER=3.23
+BOOTLOADER=4.13
 SLEEPDURATION=10
+UNLOCKBOOTLOADER=true
+ERASEALL=true
 source ../../../common/generate-factory-images-common.sh

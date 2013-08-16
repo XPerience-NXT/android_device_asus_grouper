@@ -35,14 +35,15 @@
 #include <tinyalsa/asoundlib.h>
 
 #include <audio_utils/resampler.h>
-
-#include "audio_route.h"
+#include <audio_route/audio_route.h>
 
 #define PCM_CARD 1
 #define PCM_DEVICE 0
 #define PCM_DEVICE_SCO 2
 
-#define OUT_PERIOD_SIZE 880
+#define MIXER_CARD 1
+
+#define OUT_PERIOD_SIZE 512
 #define OUT_SHORT_PERIOD_COUNT 2
 #define OUT_LONG_PERIOD_COUNT 8
 #define OUT_SAMPLING_RATE 44100
@@ -97,7 +98,8 @@ struct audio_device {
     struct audio_hw_device hw_device;
 
     pthread_mutex_t lock; /* see note below on mutex acquisition order */
-    unsigned int devices;
+    unsigned int out_device;
+    unsigned int in_device;
     bool standby;
     bool mic_mute;
     struct audio_route *ar;
@@ -176,19 +178,23 @@ static void select_devices(struct audio_device *adev)
 {
     int headphone_on;
     int speaker_on;
+    int docked;
     int main_mic_on;
 
-    headphone_on = adev->devices & (AUDIO_DEVICE_OUT_WIRED_HEADSET |
+    headphone_on = adev->out_device & (AUDIO_DEVICE_OUT_WIRED_HEADSET |
                                     AUDIO_DEVICE_OUT_WIRED_HEADPHONE);
-    speaker_on = adev->devices & AUDIO_DEVICE_OUT_SPEAKER;
-    main_mic_on = adev->devices & AUDIO_DEVICE_IN_BUILTIN_MIC;
+    speaker_on = adev->out_device & AUDIO_DEVICE_OUT_SPEAKER;
+    docked = adev->out_device & AUDIO_DEVICE_OUT_ANLG_DOCK_HEADSET;
+    main_mic_on = adev->in_device & AUDIO_DEVICE_IN_BUILTIN_MIC;
 
-    reset_mixer_state(adev->ar);
+    audio_route_reset(adev->ar);
 
     if (speaker_on)
         audio_route_apply_path(adev->ar, "speaker");
     if (headphone_on)
         audio_route_apply_path(adev->ar, "headphone");
+    if (docked)
+        audio_route_apply_path(adev->ar, "dock");
     if (main_mic_on) {
         if (adev->orientation == ORIENTATION_LANDSCAPE)
             audio_route_apply_path(adev->ar, "main-mic-left");
@@ -196,10 +202,10 @@ static void select_devices(struct audio_device *adev)
             audio_route_apply_path(adev->ar, "main-mic-top");
     }
 
-    update_mixer_state(adev->ar);
+    audio_route_update_mixer(adev->ar);
 
-    ALOGV("hp=%c speaker=%c main-mic=%c", headphone_on ? 'y' : 'n',
-          speaker_on ? 'y' : 'n', main_mic_on ? 'y' : 'n');
+    ALOGV("hp=%c speaker=%c dock=%c main-mic=%c", headphone_on ? 'y' : 'n',
+          speaker_on ? 'y' : 'n', docked ? 'y' : 'n', main_mic_on ? 'y' : 'n');
 }
 
 /* must be called with hw device and output stream mutexes locked */
@@ -257,7 +263,7 @@ static int start_output_stream(struct stream_out *out)
      * (speaker/headphone) PCM or the BC SCO PCM open at
      * the same time.
      */
-    if (adev->devices & AUDIO_DEVICE_OUT_ALL_SCO) {
+    if (adev->out_device & AUDIO_DEVICE_OUT_ALL_SCO) {
         device = PCM_DEVICE_SCO;
         out->pcm_config = &pcm_config_sco;
     } else {
@@ -274,13 +280,14 @@ static int start_output_stream(struct stream_out *out)
      * the most common rate, but group 2 is required for SCO.
      */
     if (adev->active_in) {
-        pthread_mutex_lock(&adev->active_in->lock);
+        struct stream_in *in = adev->active_in;
+        pthread_mutex_lock(&in->lock);
         if (((out->pcm_config->rate % 8000 == 0) &&
-                 (adev->active_in->pcm_config->rate % 8000) != 0) ||
+                 (in->pcm_config->rate % 8000) != 0) ||
                  ((out->pcm_config->rate % 11025 == 0) &&
-                 (adev->active_in->pcm_config->rate % 11025) != 0))
-            do_in_standby(adev->active_in);
-        pthread_mutex_unlock(&adev->active_in->lock);
+                 (in->pcm_config->rate % 11025) != 0))
+            do_in_standby(in);
+        pthread_mutex_unlock(&in->lock);
     }
 
     out->pcm = pcm_open(PCM_CARD, device, PCM_OUT | PCM_NORESTART, out->pcm_config);
@@ -325,7 +332,7 @@ static int start_input_stream(struct stream_in *in)
      * it greatly simplifies things to have only the main
      * mic PCM or the BC SCO PCM open at the same time.
      */
-    if (adev->devices & AUDIO_DEVICE_IN_ALL_SCO) {
+    if (adev->in_device & AUDIO_DEVICE_IN_ALL_SCO) {
         device = PCM_DEVICE_SCO;
         in->pcm_config = &pcm_config_sco;
     } else {
@@ -341,13 +348,14 @@ static int start_input_stream(struct stream_in *in)
      * the most common rate, but group 2 is required for SCO.
      */
     if (adev->active_out) {
-        pthread_mutex_lock(&adev->active_out->lock);
+        struct stream_out *out = adev->active_out;
+        pthread_mutex_lock(&out->lock);
         if (((in->pcm_config->rate % 8000 == 0) &&
-                 (adev->active_out->pcm_config->rate % 8000) != 0) ||
+                 (out->pcm_config->rate % 8000) != 0) ||
                  ((in->pcm_config->rate % 11025 == 0) &&
-                 (adev->active_out->pcm_config->rate % 11025) != 0))
-            do_out_standby(adev->active_out);
-        pthread_mutex_unlock(&adev->active_out->lock);
+                 (out->pcm_config->rate % 11025) != 0))
+            do_out_standby(out);
+        pthread_mutex_unlock(&out->lock);
     }
 
     in->pcm = pcm_open(PCM_CARD, device, PCM_IN, in->pcm_config);
@@ -376,6 +384,7 @@ static int start_input_stream(struct stream_in *in)
     in->buffer_size = pcm_frames_to_bytes(in->pcm,
                                           in->pcm_config->period_size);
     in->buffer = malloc(in->buffer_size);
+    in->frames_in = 0;
 
     adev->active_in = in;
 
@@ -547,20 +556,19 @@ static int out_set_parameters(struct audio_stream *stream, const char *kvpairs)
     pthread_mutex_lock(&adev->lock);
     if (ret >= 0) {
         val = atoi(value);
-        if (((adev->devices & AUDIO_DEVICE_OUT_ALL) != val) && (val != 0)) {
+        if ((adev->out_device != val) && (val != 0)) {
             /*
              * If SCO is turned on/off, we need to put audio into standby
              * because SCO uses a different PCM.
              */
             if ((val & AUDIO_DEVICE_OUT_ALL_SCO) ^
-                    (adev->devices & AUDIO_DEVICE_OUT_ALL_SCO)) {
+                    (adev->out_device & AUDIO_DEVICE_OUT_ALL_SCO)) {
                 pthread_mutex_lock(&out->lock);
                 do_out_standby(out);
                 pthread_mutex_unlock(&out->lock);
             }
 
-            adev->devices &= ~AUDIO_DEVICE_OUT_ALL;
-            adev->devices |= val;
+            adev->out_device = val;
             select_devices(adev);
         }
     }
@@ -583,7 +591,7 @@ static uint32_t out_get_latency(const struct audio_stream_out *stream)
 
     pthread_mutex_lock(&adev->lock);
 
-    if (adev->screen_off && !adev->active_in && !(adev->devices & AUDIO_DEVICE_OUT_ALL_SCO))
+    if (adev->screen_off && !adev->active_in && !(adev->out_device & AUDIO_DEVICE_OUT_ALL_SCO))
         period_count = OUT_LONG_PERIOD_COUNT;
     else
         period_count = OUT_SHORT_PERIOD_COUNT;
@@ -631,7 +639,7 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
     }
     buffer_type = (adev->screen_off && !adev->active_in) ?
             OUT_BUFFER_TYPE_LONG : OUT_BUFFER_TYPE_SHORT;
-    sco_on = (adev->devices & AUDIO_DEVICE_OUT_ALL_SCO);
+    sco_on = (adev->out_device & AUDIO_DEVICE_OUT_ALL_SCO);
     pthread_mutex_unlock(&adev->lock);
 
     /* detect changes in screen ON/OFF state and adapt buffer size
@@ -851,21 +859,20 @@ static int in_set_parameters(struct audio_stream *stream, const char *kvpairs)
                             value, sizeof(value));
     pthread_mutex_lock(&adev->lock);
     if (ret >= 0) {
-        val = atoi(value);
-        if (((adev->devices & AUDIO_DEVICE_IN_ALL) != val) && (val != 0)) {
+        val = atoi(value) & ~AUDIO_DEVICE_BIT_IN;
+        if ((adev->in_device != val) && (val != 0)) {
             /*
              * If SCO is turned on/off, we need to put audio into standby
              * because SCO uses a different PCM.
              */
             if ((val & AUDIO_DEVICE_IN_ALL_SCO) ^
-                    (adev->devices & AUDIO_DEVICE_IN_ALL_SCO)) {
+                    (adev->in_device & AUDIO_DEVICE_IN_ALL_SCO)) {
                 pthread_mutex_lock(&in->lock);
                 do_in_standby(in);
                 pthread_mutex_unlock(&in->lock);
             }
 
-            adev->devices &= ~AUDIO_DEVICE_IN_ALL;
-            adev->devices |= val;
+            adev->in_device = val;
             select_devices(adev);
         }
     }
@@ -1208,22 +1215,6 @@ static int adev_close(hw_device_t *device)
     return 0;
 }
 
-static uint32_t adev_get_supported_devices(const struct audio_hw_device *dev)
-{
-    return (/* OUT */
-            AUDIO_DEVICE_OUT_SPEAKER |
-            AUDIO_DEVICE_OUT_WIRED_HEADSET |
-            AUDIO_DEVICE_OUT_WIRED_HEADPHONE |
-            AUDIO_DEVICE_OUT_ALL_SCO |
-            AUDIO_DEVICE_OUT_DEFAULT |
-            /* IN */
-            AUDIO_DEVICE_IN_BUILTIN_MIC |
-            AUDIO_DEVICE_IN_WIRED_HEADSET |
-            AUDIO_DEVICE_IN_BACK_MIC |
-            AUDIO_DEVICE_IN_ALL_SCO |
-            AUDIO_DEVICE_IN_DEFAULT);
-}
-
 static int adev_open(const hw_module_t* module, const char* name,
                      hw_device_t** device)
 {
@@ -1238,11 +1229,10 @@ static int adev_open(const hw_module_t* module, const char* name,
         return -ENOMEM;
 
     adev->hw_device.common.tag = HARDWARE_DEVICE_TAG;
-    adev->hw_device.common.version = AUDIO_DEVICE_API_VERSION_1_0;
+    adev->hw_device.common.version = AUDIO_DEVICE_API_VERSION_2_0;
     adev->hw_device.common.module = (struct hw_module_t *) module;
     adev->hw_device.common.close = adev_close;
 
-    adev->hw_device.get_supported_devices = adev_get_supported_devices;
     adev->hw_device.init_check = adev_init_check;
     adev->hw_device.set_voice_volume = adev_set_voice_volume;
     adev->hw_device.set_master_volume = adev_set_master_volume;
@@ -1258,8 +1248,10 @@ static int adev_open(const hw_module_t* module, const char* name,
     adev->hw_device.close_input_stream = adev_close_input_stream;
     adev->hw_device.dump = adev_dump;
 
-    adev->ar = audio_route_init();
+    adev->ar = audio_route_init(MIXER_CARD, NULL);
     adev->orientation = ORIENTATION_UNDEFINED;
+    adev->out_device = AUDIO_DEVICE_OUT_SPEAKER;
+    adev->in_device = AUDIO_DEVICE_IN_BUILTIN_MIC & ~AUDIO_DEVICE_BIT_IN;
 
     *device = &adev->hw_device.common;
 
