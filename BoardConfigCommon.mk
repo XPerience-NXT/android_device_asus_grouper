@@ -23,6 +23,9 @@
 # inherit from the proprietary version
 # needed for BP-flashing updater extensions
 
+# Default value, if not overridden else where.
+BOARD_BLUETOOTH_BDROID_BUILDCFG_INCLUDE_DIR ?= device/asus/grouper/bluetooth
+
 TARGET_BOARD_PLATFORM := tegra3
 TARGET_TEGRA_VERSION := t30
 
@@ -31,8 +34,7 @@ TARGET_CPU_ABI2 := armeabi
 TARGET_CPU_SMP := true
 TARGET_ARCH := arm
 TARGET_ARCH_VARIANT := armv7-a-neon
-ARCH_ARM_HAVE_TLS_REGISTER := true
-ARCH_ARM_USE_NON_NEON_MEMCPY := true
+TARGET_CPU_VARIANT := cortex-a9
 
 TARGET_USERIMAGES_USE_EXT4 := true
 
@@ -51,11 +53,8 @@ BOARD_WLAN_DEVICE           := bcmdhd
 WIFI_DRIVER_FW_PATH_PARAM   := "/sys/module/bcmdhd/parameters/firmware_path"
 WIFI_DRIVER_FW_PATH_STA     := "/vendor/firmware/fw_bcmdhd.bin"
 WIFI_DRIVER_FW_PATH_AP      := "/vendor/firmware/fw_bcmdhd_apsta.bin"
-WIFI_DRIVER_FW_PATH_P2P     := "/vendor/firmware/fw_bcmdhd_p2p.bin"
 
 TARGET_BOOTLOADER_BOARD_NAME := grouper
-TARGET_BOARD_INFO_FILE := device/asus/grouper/board-info.txt
-
 TARGET_NO_BOOTLOADER := true
 
 BOARD_USES_GENERIC_AUDIO := false
@@ -78,8 +77,31 @@ endif
 # Avoid the generation of ldrcc instructions
 NEED_WORKAROUND_CORTEX_A9_745320 := true
 
+BOARD_USES_GROUPER_MODULES := true
+
+# Required for CWM
 BOARD_HAS_NO_SELECT_BUTTON := true
-TARGET_RELEASETOOLS_EXTENSIONS := device/asus/grouper
 
 TARGET_KERNEL_SOURCE := kernel/asus/grouper
 TARGET_KERNEL_CONFIG := cyanogenmod_grouper_defconfig
+
+BOARD_SEPOLICY_DIRS += \
+	device/asus/grouper/sepolicy
+
+BOARD_SEPOLICY_UNION += \
+	file_contexts \
+	genfs_contexts \
+	app.te \
+	btmacreader.te \
+	device.te \
+	drmserver.te \
+	file.te \
+	gpsd.te \
+	init_shell.te \
+	keystore.te \
+	mediaserver.te \
+	rild.te \
+	sensors_config.te \
+	surfaceflinger.te \
+	system.te \
+	zygote.te
