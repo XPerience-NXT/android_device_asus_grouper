@@ -22,3 +22,8 @@ ro.device.screen_res=800x1280
 
 #####FINISH TEST BUILD FOR TILAPIA MADE BY KLOZZ_JESUS AKA TEAMMEX#############
 ######XPERIENCE PROYECT########################
+
+#############OVER THE AIR UPDATE########
+ otaupdater.otaid=grouper
+ otaupdater.otaver=56
+ otaupdater.otatime=20130929-1514
