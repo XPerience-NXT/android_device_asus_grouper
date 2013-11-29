@@ -81,28 +81,9 @@ BOARD_USES_GROUPER_MODULES := true
 
 # Required for CWM
 BOARD_HAS_NO_SELECT_BUTTON := true
+BOARD_RECOVERY_SWIPE := true
 
 TARGET_KERNEL_SOURCE := kernel/asus/grouper
-TARGET_KERNEL_CONFIG := cyanogenmod_grouper_defconfig
+TARGET_KERNEL_CONFIG := XPerience_grouper_defconfig
 
-BOARD_SEPOLICY_DIRS += \
-	device/asus/grouper/sepolicy
-
-BOARD_SEPOLICY_UNION += \
-	file_contexts \
-	genfs_contexts \
-	app.te \
-	btmacreader.te \
-	device.te \
-	drmserver.te \
-	file.te \
-	gpsd.te \
-	init_shell.te \
-	keystore.te \
-	mediaserver.te \
-	rild.te \
-	sensors_config.te \
-	surfaceflinger.te \
-        system_app.te \
-        system_server.te \
-	zygote.te
+TARGET_RUNNING_WITHOUT_SYNC_FRAMEWORK := true
